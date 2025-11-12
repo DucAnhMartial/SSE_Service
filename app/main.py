@@ -1,7 +1,8 @@
-from app.schemas.apiSchema import CheckHealthResponse
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi import FastAPI
 
 from app.core.config import settings
+from app.api.main import api_router
 
 app = FastAPI(
     title=settings.API_TITLE,
@@ -11,7 +12,14 @@ app = FastAPI(
     redoc_url=None,
 )
 
+# Setup CORS
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=settings.cors_allow_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-@app.get("/health",description="Health check endpoint",response_model=CheckHealthResponse)
-async def health_check():
-    return CheckHealthResponse(status="ok")
+
+app.include_router(api_router, prefix=settings.API_V1_STR)

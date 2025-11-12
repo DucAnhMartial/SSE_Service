@@ -10,6 +10,9 @@ dependencies = [
     "uvicorn[standard]==0.32.0",
     "redis==5.0.8",
     "python-dotenv==1.0.1",
+    "pydantic-settings==2.0.1",
+    "pydantic==2.10.6",
+
 ]
 
 [project.optional-dependencies]
