@@ -9,3 +9,58 @@ class CheckHealthResponse(BaseModel):
         }
     )
     status: str
+
+class SSEStreamIn(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": 
+            {
+                "event_source": "ets_payment",
+                "event_data": {
+                    "order_id": "12345",
+                    "amount": 100.00,
+                    "event_code":"ets_payment",
+                },
+            },
+            "examples": [
+                {
+                    "event_source": "ets_payment",
+                    "event_data": {
+                        "order_id": "12345",
+                        "amount": 100.00,
+                        "event_code":"ets_payment",
+                    },
+                }
+            ],
+        }
+    )
+
+class SSEStreamOut(BaseModel):
+    model_config = ConfigDict(
+        json_schema_extra={
+            "example": 
+            {
+                "event_source": "ets_payment",
+                "event_data": {
+                    "order_id": "12345",
+                    "amount": 100.00,
+                    "event_code":"ets_payment",
+                    "order_status":"paid",
+                },
+            },
+            "examples": [
+                {
+                    "event_source": "ets_payment",
+                    "event_data": {
+                        "order_id": "12345",
+                        "amount": 100.00,
+                        "event_code":"ets_payment",
+                        "order_status":"paid",
+                    },
+                }
+            ],
+        }
+    )
+    event_source: str
+    event_data: dict
+    order_status: str
