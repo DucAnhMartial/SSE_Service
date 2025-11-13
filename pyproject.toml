@@ -12,6 +12,7 @@ dependencies = [
     "python-dotenv==1.0.1",
     "pydantic-settings==2.0.1",
     "pydantic==2.10.6",
+    "gunicorn>=23.0.0",
 
 ]
 
@@ -46,3 +47,6 @@ check_untyped_defs = true
 no_implicit_optional = true
 strict_optional = true
 pretty = true
+
+[tool.setuptools.packages]
+find = { include = ["app*"], exclude = ["logs", "tests"] }
