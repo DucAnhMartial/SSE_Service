@@ -3,6 +3,7 @@ from fastapi import FastAPI
 
 from app.core.config import settings
 from app.api.main import api_router
+from app.core import logging_config
 
 app = FastAPI(
     title=settings.API_TITLE,

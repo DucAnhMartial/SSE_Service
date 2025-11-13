@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from time import monotonic
 from typing import AsyncGenerator
 
@@ -7,6 +8,8 @@ from redis.asyncio import Redis
 from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
+
+logger = logging.getLogger(__name__)
 
 def sse_headers() -> dict[str, str]:
     return {
@@ -19,7 +22,7 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
     redis_client = Redis.from_url(settings.REDIS_URL)
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(channel)
-    print("subscribed to channel", channel)
+    logger.info("subscribed to channel %s", channel)
     
     try:
        yield f"retry: {settings.SSE_RETRY_MS}\n\n"
@@ -31,9 +34,10 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
                 raw = msg["data"]
                 try: 
                     data = json.loads(raw)
-                    print("sending data to client", data)
+                    logger.info("sending data to client %s", data)
                 except Exception:
                     data = raw.decode() if isinstance(raw, bytes) else str(raw)
+                    logger.info("sending data to client %s", data)
                 yield f"data: {json.dumps(data)}\n\n"
                 
             now = monotonic()
@@ -44,12 +48,15 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
 
             await asyncio.sleep(0.2)
     except asyncio.CancelledError:
+        logger.info("cancelled subscription to channel %s", channel)
         raise
     finally:
         try:
             await pubsub.unsubscribe(channel)
+            logger.info("unsubscribed from channel %s", channel)
         finally:
             await pubsub.close()
+            logger.info("closed pubsub connection %s", channel)
 
 
 def make_sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
