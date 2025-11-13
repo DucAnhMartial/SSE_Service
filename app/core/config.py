@@ -26,9 +26,6 @@ def _parse_cors_allow_origins(value: Iterable[str] | str | None) -> List[str]:
     return [origin.rstrip("/") for origin in origins]
 
 
-def _parse_allowed_hosts(value: Iterable[str] | str | None) -> List[str]:
-    hosts = _parse_str_list(value)
-    return [host.lower() for host in hosts]
 
 
 class Settings(BaseSettings):
@@ -48,33 +45,28 @@ class Settings(BaseSettings):
     SSE_HEARTBEAT_SEC: PositiveInt = Field(os.getenv("SSE_HEARTBEAT_SEC", 25))
 
     BACKEND_CORS_ORIGINS: Annotated[
-        list[AnyUrl] | str,
-        BeforeValidator(_parse_cors_allow_origins),
-    ] = Field(os.getenv("BCORS_ORIGINS", []))
-    ALLOWED_HOSTS: Annotated[
         list[str] | str,
-        BeforeValidator(_parse_allowed_hosts),
-    ] = Field(default_factory=list, description="Allowed values for the Host header.")
+        BeforeValidator(_parse_cors_allow_origins),
+    ]
 
     
     @computed_field  
     @property
     def cors_allow_origins(self) -> List[str]:
+        print(self.BACKEND_CORS_ORIGINS)
         """Return cors origins as list[str]."""
         return [str(origin) for origin in self.BACKEND_CORS_ORIGINS]
 
-    @computed_field  
-    @property
-    def allowed_hosts(self) -> List[str]:
-        """Return allowed hosts as lower-case list."""
-        return [host.lower() for host in self.ALLOWED_HOSTS]  
-
-    def redis_channel_for_order(self, order_id: str) -> str:
-        """Compose Redis pub/sub channel name for a given order."""
+    def redis_channel_for_event(self, event_code: str, order_id: str) -> str:
+        """Compose Redis pub/sub channel name: ets_payment:success:{event_code}:{order_id}."""
+        event_code = event_code.strip()
         order_id = order_id.strip()
+        if not event_code:
+            msg = "event_code must be a non-empty string"
+            raise ValueError(msg)
         if not order_id:
             msg = "order_id must be a non-empty string"
             raise ValueError(msg)
-        return f"{self.REDIS_CHANNEL_PREFIX}{order_id}"
+        return f"{self.REDIS_CHANNEL_PREFIX}{event_code}:{order_id}"
 
 settings = Settings()
