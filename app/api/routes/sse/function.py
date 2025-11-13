@@ -19,7 +19,8 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
     redis_client = Redis.from_url(settings.REDIS_URL)
     pubsub = redis_client.pubsub()
     await pubsub.subscribe(channel)
-
+    print("subscribed to channel", channel)
+    
     try:
        yield f"retry: {settings.SSE_RETRY_MS}\n\n"
        last_ping = monotonic()
@@ -30,6 +31,7 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
                 raw = msg["data"]
                 try: 
                     data = json.loads(raw)
+                    print("sending data to client", data)
                 except Exception:
                     data = raw.decode() if isinstance(raw, bytes) else str(raw)
                 yield f"data: {json.dumps(data)}\n\n"
