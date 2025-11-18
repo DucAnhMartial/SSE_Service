@@ -11,6 +11,12 @@ from app.core.config import settings
 
 logger = logging.getLogger(__name__)
 
+redis = Redis.from_url(settings.REDIS_URL)
+
+CHANNELS = {}  # { channel: {"clients": set[Queue], "task": Task} }
+LOCK = asyncio.Lock()  # avoid race when multiple clients join same channel
+
+
 def sse_headers() -> dict[str, str]:
     return {
         "Cache-Control": "no-cache",
@@ -19,59 +25,97 @@ def sse_headers() -> dict[str, str]:
     }
 
 
-async def event_generator(channel: str) -> AsyncGenerator[str, None]:
-    redis_client = Redis.from_url(settings.REDIS_URL)
-    pubsub = redis_client.pubsub()
-
-    # Subscribe to channel
+async def redis_listener(channel: str):
+    """Single Redis subscriber for a channel, fan-out to all client queues."""
+    pubsub = redis.pubsub()
     await pubsub.subscribe(channel)
-    logger.info("Subscribing to %s", channel)
 
-    # await subscribe confirmation from Redis
-    sub_msg = await pubsub.get_message(ignore_subscribe_messages=False, timeout=1.0)
-    if sub_msg and sub_msg.get("type") == "subscribe":
-        await redis_client.set(f"sse_subscribed:{channel}", "1", ex=300)
-        logger.info("Subscription confirmed + ready flag set for %s", channel)
-    else:
-        logger.warning("No subscribe confirmation received for %s, still setting flag", channel)
-        await redis_client.set(f"sse_subscribed:{channel}", "1", ex=60)
+    logger.info("[SharedSub] Started Redis subscriber for %s", channel)
 
     try:
-        # SSE retry
-        yield f"retry: {settings.SSE_RETRY_MS}\n\n"
-
-        last_ping = monotonic()
         while True:
             msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
 
             if msg and msg.get("type") == "message":
                 raw = msg["data"]
-                try:
-                    data = json.loads(raw)
-                except Exception:
-                    data = raw.decode() if isinstance(raw, bytes) else str(raw)
-                yield f"data: {json.dumps(data)}\n\n"
-                logger.info("Sent SSE event on %s: %s", channel, data)
 
-            # Heartbeat
-            now = monotonic()
-            if now - last_ping > settings.SSE_HEARTBEAT_SEC:
-                yield "keep-alive\n\n"
-                last_ping = now
+                # Fan-out to all clients
+                for q in CHANNELS[channel]["clients"]:
+                    await q.put(raw)
 
-            await asyncio.sleep(0.05)
+            await asyncio.sleep(0.01)
 
     except asyncio.CancelledError:
-        logger.info("SSE cancelled for %s", channel)
+        logger.info("[SharedSub] Cancelled Redis listener for %s", channel)
         raise
-
     finally:
-        await redis_client.delete(f"sse_subscribed:{channel}")
         await pubsub.unsubscribe(channel)
         await pubsub.close()
-        await redis_client.close()
-        logger.info("Cleaned up pubsub and Redis connection for %s", channel)
+        logger.info("[SharedSub] Cleaned Redis subscriber for %s", channel)
+
+
+async def event_generator(channel: str) -> AsyncGenerator[str, None]:
+    
+    # Create queue for each client
+    queue = asyncio.Queue()
+
+    async with LOCK:
+        # create Channel with first client
+        if channel not in CHANNELS:
+            CHANNELS[channel] = {
+                "clients": set(),
+                "task": asyncio.create_task(redis_listener(channel))
+            }
+            logger.info("[SharedSub] Created new shared subscriber for %s", channel)
+
+        CHANNELS[channel]["clients"].add(queue)
+        logger.info("[Client] Added client to channel %s (%d clients)",
+                    channel, len(CHANNELS[channel]["clients"]))
+
+    try:
+        # Send retry config
+        yield f"retry: {settings.SSE_RETRY_MS}\n\n"
+
+        last_ping = monotonic()
+
+        while True:
+            try:
+                data = await asyncio.wait_for(queue.get(), timeout=1.0)
+            except asyncio.TimeoutError:
+                # Heartbeat
+                now = monotonic()
+                if now - last_ping > settings.SSE_HEARTBEAT_SEC:
+                    yield "keep-alive\n\n"
+                    last_ping = now
+                continue
+
+            # Parse JSON if possible
+            try:
+                parsed = json.loads(data)
+            except Exception:
+                parsed = data.decode() if isinstance(data, bytes) else str(data)
+
+            yield f"data: {json.dumps(parsed)}\n\n"
+
+    except asyncio.CancelledError:
+        logger.info("[Client] SSE cancelled for %s", channel)
+        raise
+    finally:
+        async with LOCK:
+            CHANNELS[channel]["clients"].remove(queue)
+            logger.info("[Client] Removed from channel %s (%d left)",
+                        channel, len(CHANNELS[channel]["clients"]))
+            
+            # remove shared subscriber if no clients
+            if not CHANNELS[channel]["clients"]:
+                CHANNELS[channel]["task"].cancel()
+                del CHANNELS[channel]
+                logger.info("[SharedSub] Removed shared subscriber for %s", channel)
 
 
 def make_sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:
-    return StreamingResponse(generator, media_type="text/event-stream", headers=sse_headers())
+    return StreamingResponse(
+        generator,
+        media_type="text/event-stream",
+        headers=sse_headers()
+    )
