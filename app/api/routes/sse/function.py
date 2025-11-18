@@ -26,32 +26,25 @@ def sse_headers() -> dict[str, str]:
 
 
 async def redis_listener(channel: str):
-    """Single Redis subscriber for a channel, fan-out to all client queues."""
     pubsub = redis.pubsub()
     await pubsub.subscribe(channel)
-
-    logger.info("[SharedSub] Started Redis subscriber for %s", channel)
+    logger.info(f"[SharedSub] Started Redis subscriber for {channel}")
 
     try:
-        while True:
-            msg = await pubsub.get_message(ignore_subscribe_messages=True, timeout=1.0)
-
-            if msg and msg.get("type") == "message":
-                raw = msg["data"]
-
-                # Fan-out to all clients
-                for q in CHANNELS[channel]["clients"]:
-                    await q.put(raw)
-
-            await asyncio.sleep(0.01)
-
+        
+        async for msg in pubsub.listen():
+            if msg["type"] == "message":
+                data = msg["data"]
+                
+                if channel in CHANNELS:  
+                    await asyncio.gather(*(q.put(data) for q in CHANNELS[channel]["clients"]))
     except asyncio.CancelledError:
-        logger.info("[SharedSub] Cancelled Redis listener for %s", channel)
+        logger.info(f"[SharedSub] Cancelled Redis listener for {channel}")
         raise
     finally:
         await pubsub.unsubscribe(channel)
         await pubsub.close()
-        logger.info("[SharedSub] Cleaned Redis subscriber for %s", channel)
+        logger.info(f"[SharedSub] Cleaned Redis subscriber for {channel}")
 
 
 async def event_generator(channel: str) -> AsyncGenerator[str, None]:
@@ -80,7 +73,7 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
 
         while True:
             try:
-                data = await asyncio.wait_for(queue.get(), timeout=1.0)
+                data = await asyncio.wait_for(queue.get(), timeout=0.2)
             except asyncio.TimeoutError:
                 # Heartbeat
                 now = monotonic()
