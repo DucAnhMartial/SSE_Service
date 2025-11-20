@@ -119,7 +119,36 @@ The channel for a given `(event_code, order_id)` is computed as:
 # default => ets_payment:success:{event_code}:{order_id}
 ```
 
-Publish example (Python/redis-py):
+### Subscriber Tracking
+
+Before publishing, you can check if any SSE clients are subscribed by checking for the key `sse_subscribed:{channel}`. This key is automatically set when the first client connects and removed when the last client disconnects.
+
+Publish example (Python/redis-py) with subscriber check:
+
+```python
+import json
+import redis
+
+r = redis.Redis.from_url("redis://localhost:6379/0", encoding="utf-8", decode_responses=True)
+event_code = "payment"
+order_id = "12345"
+channel = f"ets_payment:success:{event_code}:{order_id}"
+subscriber_key = f"sse_subscribed:{channel}"
+
+# Check if any SSE subscribers are listening (optional optimization)
+if r.exists(subscriber_key):
+    payload = {
+        "event_code": event_code,
+        "order_id": order_id,
+        "order_status": "paid",
+        "amount": 100.00,
+    }
+    r.publish(channel, json.dumps(payload))
+else:
+    print(f"No SSE subscribers for {channel}, skipping publish")
+```
+
+Publish example without subscriber check:
 
 ```python
 import json

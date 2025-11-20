@@ -59,7 +59,10 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
                 "clients": set(),
                 "task": asyncio.create_task(redis_listener(channel))
             }
-            logger.info("[SharedSub] Created new shared subscriber for %s", channel)
+            # Mark channel as having active subscribers in Redis
+            subscriber_key = settings.redis_subscriber_key(channel)
+            await redis.set(subscriber_key, "1")
+            logger.info("[SharedSub] Created new shared subscriber for %s (set %s)", channel, subscriber_key)
 
         CHANNELS[channel]["clients"].add(queue)
         logger.info("[Client] Added client to channel %s (%d clients)",
@@ -102,8 +105,11 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
             # remove shared subscriber if no clients
             if not CHANNELS[channel]["clients"]:
                 CHANNELS[channel]["task"].cancel()
+                # Remove subscriber tracking key from Redis
+                subscriber_key = settings.redis_subscriber_key(channel)
+                await redis.delete(subscriber_key)
                 del CHANNELS[channel]
-                logger.info("[SharedSub] Removed shared subscriber for %s", channel)
+                logger.info("[SharedSub] Removed shared subscriber for %s (deleted %s)", channel, subscriber_key)
 
 
 def make_sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse:

@@ -69,4 +69,8 @@ class Settings(BaseSettings):
             raise ValueError(msg)
         return f"{self.REDIS_CHANNEL_PREFIX}{event_code}:{order_id}"
 
+    def redis_subscriber_key(self, channel: str) -> str:
+        """Return Redis key name for tracking active SSE subscribers: sse_subscribed:{channel}."""
+        return f"sse_subscribed:{channel}"
+
 settings = Settings()
