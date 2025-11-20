@@ -47,7 +47,7 @@ async def redis_listener(channel: str):
         logger.info(f"[SharedSub] Cleaned Redis subscriber for {channel}")
 
 
-async def event_generator(channel: str) -> AsyncGenerator[str, None]:
+async def event_generator(channel: str, key: str) -> AsyncGenerator[str, None]:
     
     # Create queue for each client
     queue = asyncio.Queue()
@@ -99,9 +99,10 @@ async def event_generator(channel: str) -> AsyncGenerator[str, None]:
     finally:
         async with LOCK:
             CHANNELS[channel]["clients"].remove(queue)
+            await delete_cache(key)
             logger.info("[Client] Removed from channel %s (%d left)",
                         channel, len(CHANNELS[channel]["clients"]))
-            
+            logger.info("[Client] Deleted cache for key: %s", key)
             # remove shared subscriber if no clients
             if not CHANNELS[channel]["clients"]:
                 CHANNELS[channel]["task"].cancel()
@@ -118,3 +119,30 @@ def make_sse_response(generator: AsyncGenerator[str, None]) -> StreamingResponse
         media_type="text/event-stream",
         headers=sse_headers()
     )
+
+from urllib.parse import urlparse
+
+def parse_url(url: str) -> tuple[str, str, str]:
+    path = urlparse(url).path           # /event_code/order_id/unique_id
+    parts = path.strip("/").split("/")  # ['event_code', 'order_id', 'unique_id']
+    key = f"{parts[2]}:{parts[0]}:{parts[1]}"
+    return key
+
+async def get_cache(key: str) -> bool:
+    logger.info(f"Checking cache for key: {key}")
+    if await redis.exists(key):
+        logger.info(f"Cache found for key: {key}")
+        return True
+    else:
+        logger.info(f"Cache not found for key: {key}")
+        return False
+
+
+async def delete_cache(key: str) -> bool:   
+    logger.info(f"Deleting cache for key: {key}")
+    if await redis.delete(key):
+        logger.info(f"Cache deleted for key: {key}")
+        return True
+    else:
+        logger.info(f"Cache not found for key: {key}")
+        return False
